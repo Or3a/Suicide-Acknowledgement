@@ -1,0 +1,692 @@
+---
+title: "Suicide Acknowledgement" 
+# author: "Orea Kicaj"
+# date: "2022"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source_code: embed
+    vertical_layout: scroll
+    theme: united
+    # "bootstrap","united", "yeti"
+---
+
+```{r setup, include=FALSE}
+
+# Load necessary packages. 
+library(flexdashboard) # Dashboard package
+
+library(highcharter) # Interactive data visualizations
+library("viridis")
+library(RColorBrewer)
+library(wesanderson) # Color gradients
+# devtools::install_github("karthik/wesanderson")    ...for the latest version
+library(tidyverse) # Metapackge
+library(countrycode) # Converting country names/codes
+library(DT) # Displaying data tables
+library(crosstalk) # Provides interactivity for HTML widgets
+library(plotly) # Interactive data visualizations
+library(stringr)
+library(png)
+library("jsonlite")
+# install.packages("fontawesome")
+
+#install.packages("jsonlite", repos="https://cran.rstudio.com/")
+# if not specified otherwise to install a package : install.packages("name of package here")
+
+```
+
+
+
+```{r}
+# DATA IMPORT
+df <- read.csv('DATA_HDI.csv',na = c("..")) # In this dataset NA is identified as ..
+
+# CLEAN AND PREPROCESS 
+
+df.long <- pivot_longer(df, cols="X1996":"X2020", names_to = "Year", values_to = "Value") # To put the years in one column
+df.wide <- pivot_wider(df.long, names_from = c("Series_Code", "Series_Name"), values_from = "Value", names_sep = "_") # Separating in columns 
+
+finalData <- df.wide %>%
+      mutate_at("Year", str_replace, "X", "") 
+finalData$Year = as.numeric(as.character(finalData$Year)) # Turn year from chr to dbl, because it will open problems with charts
+
+# I will change names of the dataset multiple times, because of the longness and disorder
+
+names(finalData)[names(finalData) == "ï..Country_Name"] <- "Country_Name"
+names(finalData)[names(finalData) == "SH.STA.SUIC.P5_Suicide mortality rate (per 100,000 population)"] <- "suicidePer100000"
+names(finalData)[names(finalData) == "SH.STA.SUIC.FE.P5_Suicide mortality rate, female (per 100,000 female population)"] <- "suicideFPer100000F"
+names(finalData)[names(finalData) == "SH.STA.SUIC.MA.P5_Suicide mortality rate, male (per 100,000 male population)"] <- "suicideMPer100000M"
+
+```
+
+```{r include=FALSE}
+
+# Create a custom theme for the plots. 
+custom_theme <- hc_theme(
+  colors = c('#5CACEE', 'green', 'red'),
+  chart = list(
+         backgroundColor = '#f7fbff', 
+         plotBorderColor = "black"),
+ 
+  cursor = "crosshair")
+```
+
+
+<style>
+.colored {
+  background-color: #FAFAFA;
+}
+</style>
+
+
+Worldwide
+=======================================================================
+
+
+Row  {data-height=450}
+-----------------------------------------------------------------------
+
+
+### Map {data-width=500}
+
+```{r include=FALSE}
+ "I am using highcharts to create interactive  visualizations"
+ "Worldgeojson uses some different Country names, so I changed my original .cvs file according to that."
+```
+
+```{r}
+data(worldgeojson, package = "highcharter")
+
+col <- wes_palette("GrandBudapest1", 3, type = c("discrete")) #Also color blind safe, to reach more audience
+
+colors <- wes_palette("GrandBudapest1", 226, type = "continuous")
+
+# Filter data to not include the "World" column, calculate avg Suicide rates (per 100K people) from all the years / Per country
+country_tibble <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, suicidePer100000, Year) %>%
+  filter(!is.na(suicidePer100000)) %>%
+  group_by(Country_Name)  %>% 
+  summarise(suicidePer100000 = mean(suicidePer100000)) %>%
+  arrange(desc(suicidePer100000))
+
+# Map chart with Suicide rates/ 100000 people during the years
+
+highchart() %>%
+  hc_add_series_map(worldgeojson, country_tibble, value = "suicidePer100000", joinBy = c('name','Country_Name'), name = "Suicides (per 100K people)") %>% 
+  hc_add_series(country_tibble, hcaes(x = Country_Name, y = suicidePer100000, color = colors), type = "pie", name = "Suicides (per 100K people)") %>% 
+  hc_colorAxis(stops = color_stops(colors = col),  max = max(country_tibble$suicidePer100000)) %>% 
+  hc_title(text = "Suicides Rate by Country") %>% 
+  hc_subtitle(text = "1996-2020") %>%
+  hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+  hc_plotOptions(
+  pie = list(center = c('10%', '80%'), size = 110, dataLabels = list(enabled = FALSE))) %>% 
+  hc_add_theme(custom_theme)
+
+```
+>It’s important to note that looking at a global level might not truly be representative because the definition of suicide (and the reliability that a death is recorded as suicide) will likely vary between countries.
+
+
+### With the highest risks for Females {data-width=250}
+
+
+```{r}
+color <- c("#FAFAFA","#FAFAFA","#FAFAFA","#FAFAFA","#FAFAFA")
+colorsF <- c("#ef6c00", "#fb8c00", "#ffb300", "#ffca28","#fff176")
+colorsM <- c("#1a237e", "#3949ab", "#1e88e5", "#29b6f6","#80deea")
+
+country_FemaleBar <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, suicideFPer100000F,Year) %>%
+  filter(!is.na(suicideFPer100000F)) %>%
+  group_by(Country_Name)  %>% 
+  summarise(suicideFPer100000F = mean(suicideFPer100000F)) %>%
+  arrange(desc(suicideFPer100000F))
+
+riskedF <- head(country_FemaleBar, 5)
+lessriskedF <- tail(country_FemaleBar, 5)
+# The charts are in the same scale to also show equality. For exp. if I left yAxis as it is and not put max = 100, it would look like female no. are almost the same as male no.
+inHigherRisk <- highchart() %>%
+    hc_add_series(riskedF, hcaes(x = Country_Name, y = suicideFPer100000F, color = colorsF), type = "bar", name = "F no.")  %>% 
+    hc_legend(enabled = FALSE) %>%
+    hc_xAxis(categories = riskedF$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 4,
+             scrollbar = list(enabled = TRUE),
+             opposite=TRUE) %>%
+    hc_yAxis(title = list(text = "Suicide mortality rate, female (per 100,000 female population)"), reversed=TRUE, min = 0, max = 100) %>%
+    hc_plotOptions(bar = list(stacking = "normal", 
+                              pointPadding = 0, groupPadding = 0.1, borderWidth = 0.5)) %>% 
+    hc_add_theme(hc_theme_tufte())
+inHigherRisk
+
+```
+> Gender related, which country is more risked? 
+
+### With the highest risks for Males {data-width=250}
+
+
+
+```{r}
+colors <- c("#1a237e", "#3949ab", "#1e88e5", "#29b6f6","#80deea")
+
+country_MaleBar <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, suicideMPer100000M, Year) %>%
+  filter(!is.na(suicideMPer100000M)) %>%
+  group_by(Country_Name)  %>% 
+  summarise(suicideMPer100000M = mean(suicideMPer100000M)) %>%
+  arrange(desc(suicideMPer100000M))
+
+
+riskedM <- head(country_MaleBar, 5)
+
+
+highchart() %>%
+    hc_add_series(riskedM, hcaes(x = Country_Name, y = suicideMPer100000M, color = colors), type = "bar", name = "M no.")  %>% 
+    hc_legend(enabled = FALSE) %>%
+    hc_xAxis(categories = riskedM$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 4,
+             scrollbar = list(enabled = TRUE)) %>%
+    hc_yAxis(title = list(text = "Suicide mortality rate, male (per 100,000 male population)"), min = 0, max = 100) %>%
+    hc_plotOptions(bar = list(stacking = "normal", 
+                              pointPadding = 0.1, groupPadding = 0, borderWidth = 0.5)) %>% 
+    hc_add_theme(hc_theme_tufte())
+```
+> We see that Lesotho and Eswatini are in high numbers for both genders 
+
+Row {.tabset }
+-----------------------------------------------------------------------
+
+### Worldwide suicides {.no-padding}
+
+```{r}
+
+library(imager)
+# Create tibble for our line 
+im <- load.image("Learning2.png")
+img <- readPNG("Learning2.png")
+
+overall_tibble <- finalData %>%
+  filter(Country_Code == "WLD") %>% 
+  select(Year, suicidePer100000) %>%
+  group_by(Year) 
+# Create line plot.
+highchart() %>% 
+    hc_add_series(
+      overall_tibble,
+      type = "line",
+      shape = 'url(https://www.highcharts.com/samples/graphics/sun.png)',
+      marker = list(symbol = im),
+      hcaes(
+        x = Year,
+        y = suicidePer100000),
+      color= "#f48fb1"
+      ) %>%
+    hc_tooltip(crosshairs = TRUE, borderWidth = 1, headerFormat = "", pointFormat = paste("Suicides no: <b>{point.y}</b>")) %>%
+    hc_title(text = "World Suicides rates/100K people") %>% 
+    hc_subtitle(text = "1996-2020") %>%
+    hc_xAxis(title = list(text = "Year")) %>%
+    
+    hc_yAxis(title = (text = "Suicides per 100K people"),
+             min = 0,
+             plotLines = list(list(
+             width = 1, 
+             value = overall_tibble$suicidePer100000,
+             label = list(style = list(color = "black"))))) %>%
+    hc_legend(enabled = FALSE) %>% 
+     hc_add_theme(hc_theme_google())
+
+```
+
+> Globaly suicide rates are droping as time progresses. Overall, this is a positive factor, but still the numbers are pretty hight. However, trends over time (within countries) are likely to be reliable. 
+  
+  
+### Worldwide suicides by Gender {.no-padding} 
+```{r}
+# Create tibble for our line 
+
+overall_tibble <- finalData %>%
+  filter(Country_Code == "WLD") %>% 
+  select(Year, suicidePer100000, suicideFPer100000F, suicideMPer100000M) %>%
+  group_by(Year) 
+# Create line plot.
+highchart() %>%
+    hc_add_series(
+      overall_tibble,
+      "line",
+      name = "Female",
+      hcaes(
+        x = Year,
+        y = suicideFPer100000F),
+      color = "#ffd54f"
+          ) %>%
+    hc_add_series(
+      overall_tibble,
+      "line",
+      name = "Male",
+      hcaes(
+        x = Year,
+        y = suicideMPer100000M),
+      color = "#80deea"
+          ) %>%
+  
+    hc_tooltip(crosshairs = TRUE, borderWidth = 1, sort = TRUE, table = TRUE) %>%
+    hc_title(text = "Rates by gender") %>% 
+    hc_subtitle(text = "1996-2020") %>%
+    hc_xAxis(title = list(text = "Year")) %>%
+    
+    hc_yAxis(title = (text = "Suicides per 100K people"),
+             min = 0,
+             plotLines = list(list(
+             width = 1, 
+             value = overall_tibble$suicidePer100000,
+             label = list(style = list(color = "black"))))) %>%
+    
+     hc_add_theme(hc_theme_google())
+
+```
+> The suicide rate for men is almost 2 times higher than it is for women. One of the reasons is the traditional male gender roles that discourage emotional expression.Are less likely to seek help and may be more likely to self-treat symptoms of depression with alcohol and other substances. If you are reading this and feel overwhelmed, please stop here, do not ignore the signs and reach out for help.
+
+
+
+Risk Factors
+========================================================================
+
+
+
+Row  {data-height=400}
+-----------------------------------------------------------------------
+
+
+```{r include=FALSE}
+ "I wanted to see how actual fertility rate and Wanted fertility might be a risk factor for suicide. Does access to protection affect in any way?"
+```
+
+###  Is unwanted birth an indicator?  {data-width=800}
+
+
+```{r}
+
+names(finalData)[names(finalData) == "SP.DYN.CONU.ZS_Contraceptive prevalence, any method (% of married women ages 15-49)"] <- "ContraceptivePrevelance"
+names(finalData)[names(finalData) == "SP.DYN.TFRT.IN_Fertility rate, total (births per woman)"] <- "FertilityRate"
+names(finalData)[names(finalData) == "SP.DYN.WFRT_Wanted fertility rate (births per woman)"] <- "WantedFertilityRate"
+
+birthIndicator <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, ContraceptivePrevelance, FertilityRate, WantedFertilityRate, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000, WantedFertilityRate, FertilityRate, ContraceptivePrevelance) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    ContraceptivePrevelance = mean(ContraceptivePrevelance),
+    FertilityRate = mean(FertilityRate),
+    WantedFertilityRate =   mean(WantedFertilityRate)) %>%
+  arrange(WantedFertilityRate)
+
+highchart() %>%
+    hc_add_series(birthIndicator, hcaes(x = WantedFertilityRate, y = suicidePer100000, color = desc(FertilityRate), size=ContraceptivePrevelance), type = 'scatter', maxSize = "10%")  %>% 
+    hc_legend(enabled = FALSE) %>%
+    hc_xAxis(title = list(text = "Wanted fertility rate (births per woman)")) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, pointFormat = paste("Country: {point.Country_Name}  <br /> Suicides: {point.y}  <br />  Wanted Fertility Rate: {point.x} <br /> Contraceptive Prevelance: {point.ContraceptivePrevelance}")) %>%
+    hc_add_theme(hc_theme_tufte())
+
+
+
+```
+
+***
+
+> From this visualization we see that in some of these cases (not in all of them) where wanted fertility rate is higher than 5, the suicide ratio is really low.
+  But, unfortunately when wanted fertility rate is less than 3ish, we see an increasing tendency of suicide numbers
+
+Row  {data-height=600}
+-----------------------------------------------------------------------
+
+
+
+### Health and Basic needs 10, more risked countries  {data-width=500}
+```{r}
+colors <- c("#9c27b0", "#2196f3", "#ffc107", "#e91e63","#607d8b","#cddc39")
+
+names(finalData)[names(finalData) == "EG.CFT.ACCS.ZS_Access to clean fuels and technologies for cooking (% of population)"] <- "AccessToCleanFuels_cookingTech"
+names(finalData)[names(finalData) == "EG.ELC.ACCS.ZS_Access to electricity (% of population)"] <- "AccessToElectricity"
+names(finalData)[names(finalData) == "ER.H2O.FWTL.ZS_Annual freshwater withdrawals, total (% of internal resources)"] <- "FreshWaterWithdrawal"
+names(finalData)[names(finalData) == "IT.NET.USER.ZS_Individuals using the Internet (% of population)"] <- "IndividualsUsingInternet"
+names(finalData)[names(finalData) == "SH.H2O.BASW.ZS_People using at least basic drinking water services (% of population)"] <- "PeopleUsingAtLeast_BasicDrinkingWaterServices"
+
+names(finalData)[names(finalData) == "SH.STA.BASS.ZS_People using at least basic sanitation services (% of population)"] <- "PeopleUsingAtLeast_BasicSanitationServices"
+
+
+basicNeeds <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, AccessToCleanFuels_cookingTech, AccessToElectricity, FreshWaterWithdrawal, IndividualsUsingInternet, PeopleUsingAtLeast_BasicDrinkingWaterServices, PeopleUsingAtLeast_BasicSanitationServices, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000, FreshWaterWithdrawal, AccessToElectricity, AccessToCleanFuels_cookingTech, IndividualsUsingInternet, PeopleUsingAtLeast_BasicDrinkingWaterServices, PeopleUsingAtLeast_BasicSanitationServices) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    AccessToCleanFuels_cookingTech = mean(AccessToCleanFuels_cookingTech),
+    AccessToElectricity = mean(AccessToElectricity),
+    IndividualsUsingInternet = mean(IndividualsUsingInternet),
+    PeopleUsingAtLeast_BasicDrinkingWaterServices = mean(PeopleUsingAtLeast_BasicDrinkingWaterServices),
+    PeopleUsingAtLeast_BasicSanitationServices = mean(PeopleUsingAtLeast_BasicSanitationServices),
+    FreshWaterWithdrawal =   mean(FreshWaterWithdrawal)) %>%
+  arrange(desc(suicidePer100000))
+
+basicNeeds10top <- head(basicNeeds, 10)
+basicNeeds10bottom <- tail(basicNeeds, 10)
+
+highchart() %>%
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = AccessToCleanFuels_cookingTech), type = "scatter", color = colors[1], name = "Access to clean fuels and technologies for cooking (% of population)")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = AccessToElectricity), type = "scatter", color = colors[2], name = "Access to electricity (% of population)")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = FreshWaterWithdrawal), type = "scatter", color = colors[3], name = "Fresh Water Withdrawal")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = IndividualsUsingInternet), type = "scatter", color = colors[4],name = "Individuals Using Internet")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = PeopleUsingAtLeast_BasicDrinkingWaterServices), type = "scatter", color = colors[5], name = "People Using At Least  Basic Drinking Water Services")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = PeopleUsingAtLeast_BasicSanitationServices), type = "scatter", color = colors[6], name = "People Using At Least Basic Sanitation Services")  %>% 
+    hc_add_series(basicNeeds10top, hcaes(x = Country_Name, y = suicidePer100000), type = "line", color = "black", name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = basicNeeds10top$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people"), max = 250) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+
+```
+
+### Health and Basic needs, 10 less risked countries  {data-width=500}
+```{r}
+highchart() %>%
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = AccessToCleanFuels_cookingTech), type = "scatter", color = colors[1], name = "Access to clean fuels and technologies for cooking (% of population)")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = AccessToElectricity), type = "scatter", color = colors[2], name = "Access to electricity (% of population)")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = FreshWaterWithdrawal), type = "scatter", color = colors[3], name = "Fresh Water Withdrawal")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = IndividualsUsingInternet), type = "scatter", color = colors[4],name = "Individuals Using Internet")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = PeopleUsingAtLeast_BasicDrinkingWaterServices), type = "scatter", color = colors[5], name = "People Using At Least  Basic Drinking Water Services")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = PeopleUsingAtLeast_BasicSanitationServices), type = "scatter", color = colors[6], name = "People Using At Least Basic Sanitation Services")  %>% 
+    hc_add_series(basicNeeds10bottom, hcaes(x = Country_Name, y = suicidePer100000), type = "line", color = "black", name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = basicNeeds10bottom$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+```
+
+
+
+Row  {data-height=400}
+-----------------------------------------------------------------------
+
+
+### What do we see?  {data-width=400}
+```{r}
+"These Charts show that health is not a straighforward indicator."
+"Somehow the welfare of a country doesn't mean that is risk free"
+"An interesting view is water withdrawal, where in 'the most of' the less risked countries it is either really high or with no data"
+```
+
+### Health care {data-width=600}
+```{r}
+colors <- c("#9c27b0", "#2196f3", "#ffc107", "#e91e63","#607d8b")
+
+names(finalData)[names(finalData) == "SH.MED.CMHW.P3_Community health workers (per 1,000 people)"] <- "HealthWorkers_1000p"
+
+names(finalData)[names(finalData) == "SH.XPD.CHEX.GD.ZS_Current health expenditure (% of GDP)"] <- "HealthExpenditure"
+names(finalData)[names(finalData) == "per_si_allsi.cov_pop_tot_Coverage of social insurance programs (% of population)"] <- "SocialInsuranceProg"
+
+healthCare <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, HealthWorkers_1000p, HealthExpenditure, SocialInsuranceProg, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000, HealthWorkers_1000p, HealthExpenditure, SocialInsuranceProg) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    HealthWorkers_1000p = mean(HealthWorkers_1000p),
+    HealthExpenditure = mean(HealthExpenditure),
+    SocialInsuranceProg = mean(SocialInsuranceProg))  %>% 
+  arrange(desc(suicidePer100000))
+
+
+highchart() %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = HealthWorkers_1000p), type = "column", color = colors[1], name = "Community health workers (per 1,000 people)") %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = HealthExpenditure), type = "column", color = colors[3], name = "Current health expenditure (% of GDP)")  %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = SocialInsuranceProg), type = "column", color = colors[2], name = "Coverage of social insurance programs (% of population)")  %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = suicidePer100000), type = "scatter", color = "black", name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = healthCare$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+
+```
+
+
+Row  {data-height=300}
+-----------------------------------------------------------------------
+
+
+
+### Dept and Poverty {data-width=400}
+```{r}
+colors <- c("#9c27b0", "#2196f3", "#ffc107", "#e91e63","#607d8b")
+
+names(finalData)[names(finalData) == "DT.TDS.DECT.EX.ZS_Total debt service (% of exports of goods, services and primary income)"] <- "TotalDeptService"
+names(finalData)[names(finalData) == "SI.POV.DDAY_Poverty headcount ratio at $1.90 a day (2011 PPP) (% of population)"] <- "PovertHeadCountRatio"
+
+
+healthCare <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name, TotalDeptService, PovertHeadCountRatio, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000, TotalDeptService, PovertHeadCountRatio) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    TotalDeptService = mean(TotalDeptService),
+    PovertHeadCountRatio = mean(PovertHeadCountRatio))  %>% 
+  arrange(desc(suicidePer100000))
+
+
+highchart() %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = TotalDeptService), type = "column", color = colors[3], name = "Total debt service (% of exports of goods, services and primary income)")  %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = PovertHeadCountRatio), type = "column", color = colors[2], name = "Poverty headcount ratio")  %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = suicidePer100000), type = "line", color = colors[4], name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = healthCare$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+
+```
+```{r include=FALSE}
+ "I am  taking into consideration DEPT and POVERTY. Well, yes poverty is one of the factors that have a negative impact. Not convinced? We see that as Poverty headcount ratio decreeases, Suicide ratio does too. But why are there outliers? 
+ 
+Try this: 
+Belarus <-  finalData %>%
+  filter(!(Country_Code == 'WLD') & !(Country_Name == 'Belarus')) %>% 
+  select(Country_Name, PovertHeadCountRatio, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    PovertHeadCountRatio = mean(PovertHeadCountRatio))  %>% 
+  arrange(desc(suicidePer100000))
+
+Belarus
+
+This is one of the countries with a high suicide ration, but low poverty ration. The reason is there are a lot of not declared data (NA). Even if i fill them with a value or drop them, it will still be a problem."
+
+
+```
+
+
+
+### Education {data-width=400}
+```{r}
+colors <- c("#9c27b0", "#2196f3", "#ffc107", "#e91e63","#607d8b")
+
+names(finalData)[names(finalData) == "SE.XPD.TOTL.GD.ZS_Government expenditure on education, total (% of GDP)"] <- "GovExpenditureOnEducation"
+names(finalData)[names(finalData) == "SL.UEM.NEET.ZS_Share of youth not in education, employment or training, total (% of youth population)"] <- "YouthOutOfEducation"
+
+names(finalData)[names(finalData) == "SE.TER.CUAT.BA.ZS_Educational attainment, at least Bachelor's or equivalent, population 25+, total (%) (cumulative)"] <- "BachelorFinished"
+names(finalData)[names(finalData) == "SE.PRM.ENRR_School enrollment, primary (% gross)"] <- "SchoolEnrollment"
+names(finalData)[names(finalData) == "SE.PRM.UNER.ZS_Children out of school (% of primary school age)"] <- "ChildrenOutOfSchool"
+healthCare <-  finalData %>%
+  filter(!(Country_Code == "WLD")) %>% 
+  select(Country_Name,YouthOutOfEducation, ChildrenOutOfSchool, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000,  YouthOutOfEducation,ChildrenOutOfSchool) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    YouthOutOfEducation = mean(YouthOutOfEducation),
+   ChildrenOutOfSchool = mean(ChildrenOutOfSchool))  %>% 
+  arrange(desc(suicidePer100000))
+
+
+highchart() %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = YouthOutOfEducation), type = "area", color = colors[2], name = "Youth Out Of Education")  %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = ChildrenOutOfSchool), type = "area", color = colors[5], name = "Children Out Of School")  %>% 
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = suicidePer100000), type = "scatter", color = colors[1], name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = healthCare$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+```
+> In conclusion no, education is not a determinant
+
+Row  {data-height=300}
+-----------------------------------------------------------------------
+
+### Is war a factor? {data-width=300}
+```{r}
+# I took war into consideration to see if it affects the society we live in. Well, yes it does but not in this exact form.
+
+colors <- c("#9c27b0", "#2196f3", "#ffc107", "#e91e63","#607d8b")
+
+
+names(finalData)[names(finalData) == "VC.BTL.DETH_Battle-related deaths (number of people)"] <- "MortalityByBattles"
+names(finalData)[names(finalData) == "SP.POP.TOTL_Population, total"] <- "Population"
+
+healthCare <-  finalData %>%
+  filter(!(Country_Code == "WLD") & !((MortalityByBattles == 0))) %>% 
+  select(Country_Name,MortalityByBattles,Population, suicidePer100000, Year) %>%
+  drop_na(suicidePer100000, Population, MortalityByBattles) %>%
+  group_by(Country_Name)  %>% 
+  summarise(
+    suicidePer100000 = mean(suicidePer100000), 
+    MortalityByBattles = round((sum(MortalityByBattles)/sum(Population))*100000, 2))  %>% 
+  arrange(desc(suicidePer100000))
+
+
+highchart() %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = MortalityByBattles), type = "line", color = colors[2], name = "Mortality By Battles")  %>%
+    hc_add_series(healthCare, hcaes(x = Country_Name, y = suicidePer100000), type = "line", color = colors[4], name = "suicidePer100000")  %>% 
+    hc_xAxis(categories = healthCare$Country_Name, 
+             labels = list(step = 1),
+             min = 0, max = 9) %>%
+    hc_yAxis(title = list(text = "Suicides per 100K people")) %>%
+    hc_tooltip(borderWidth = 1, valueSuffix = '') %>%
+    hc_add_theme(hc_theme_tufte())
+
+
+```
+> Nope
+
+
+
+
+Info and help
+========================================================================
+
+Column {data-width=400 .colored }
+-----------------------------------------------------------------------
+
+### Why this topic 
+
+***
+
+
+Suicide is one of those topics we are afraid to discuss.
+
+This cannot be treated lightly, and even less from a data analysis point of view.
+
+<p>
+Suicide is a complex issue and therefore suicide prevention efforts require coordination and collaboration among multiple sectors of society, including the health sector and other sectors such as education, labour, agriculture, business, justice, law, defense, politics, and the media. These efforts must be comprehensive and integrated as no single approach alone can make an impact on an issue as complex as suicide.
+<p/>
+<br>
+
+In this notebook I am attempting to show how these factors actually impact the Suicide numbers.  
+
+
+<br>
+After viewing a lot of examples, I stumbled upon this data set, which had everything I needed.The other ones where mostly the same but seperated, so this easies things out.
+<br>
+* https://databank.worldbank.org/source/world-development-indicators/Type/CHART/preview/on
+
+<br>
+Some of the main elements this dataset is focused on
+<br>
+Human Development <br>
+Financial problems<br>
+Absence of social support systems<br>
+Health<br>
+Life and Fertility<br>
+Gender<br>
+
+Etc.
+
+Column {data-width=400 .colored }
+-----------------------------------------------------------------------
+
+### HOTLINE NUMBERS 
+
+***
+You are not alone, get the help you need: 
+
+Numbers in Italy 
+
+
+<b>Samaritans – ONLUS<b/> <br>
+Hotline: 800 86 00 22 <br>
+Website: samaritans-onlus.it
+
+<br>
+
+<b> Telefono Amico Italia <b/> <br>
+Hotline: 199 284 284 <br>
+Website: telefonoamico.it
+
+
+<br>
+<hr />
+
+
+ To find suicide hotlines for your country, please view:
+
+* https://en.wikipedia.org/wiki/List_of_suicide_crisis_lines
+
+
+
+```{r include=FALSE}
+ "Some of the potential trigers where we must take action on:  
+  * The health care system and the number of workers there,
+  * The inequality of treating one gender or another,
+  * Well, Poverty. But this is one of those factors which does harm in every possible way,
+  * Taking care of basic human needs,
+  * Taking measures to protect against unwanted births
+"
+
+```
+
+
+
